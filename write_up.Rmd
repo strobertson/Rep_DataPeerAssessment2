@@ -1,34 +1,139 @@
 ---
-title: "Untitled"
+title: "Between 1950 and November 2011 what weather events in the USA have had the biggest negative impact on population health and largest economic impact"
 author: "Scott Robertson"
 date: "02/10/2018"
 output: html_document
 ---
 
 ```{r setup, include=TRUE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
 ```
 
-## R Markdown
+## Synopsis
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+This data has been used to answer two questions in this paper:
+
+1. Across the United States, which types of events are most harmful with respect to population health?
+2. Across the United States, which types of events have the greatest economic consequences?
+
+## Environment setup
+
+During this analysis the following R packages will be used. The code provided below will check if they are already installed, install any missing ones, and load them into your working envrionment. 
+
+```{r packages}
+
+library(datasets)
+library(dplyr)
+
+```
+
+The data for this project is avalible in the form of a comma-separated-value file compressed via the bzip2 algorithm to reduce its size. You can download the file from here:
+
+- [Storm Data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2) [47Mb]
+
+There is also some documentation of the database available. This provides details of how the raw data was captured and the structure of the data.
+
+- National Weather Service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+- National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+The following code will 
+
+```{r environment, cache=TRUE}
+# Create data folder in working directory
+if (!file.exists("data/raw")) {
+        dir.create("data/raw")
+}
+
+# Store url of data file as a variable
+url1 <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+url2 <- "https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf"
+url3 <- "https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf"
+        
+# Download data file and supporting documents to data folder and store download time
+download.file(url1, "./data/raw/storm_data.csv.bz2", method = "curl")
+download.file(url2, "./data/raw/storm_data_documentation.pdf", method = "curl")
+download.file(url3, "./data/raw/storm_data_faqs.pdf", method = "curl")
+date_downloaded <- Sys.time()
+
+# Output date data was downloaded
+date_downloaded
+```
 
 ## Study data
 
-```{r data}
+```{r data, cache=TRUE}
+# Read full data set into R and show head of file
+storm_data <- read.csv("./data/raw/storm_data.csv.bz2", header = TRUE, sep = ",")
 
-url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+# Look at the head of the data set to get idea of structure and identify fields needed for analysis
+head(storm_data)
 
+# Check that the data set only contains information for the 50 USA states
+str(storm_data$STATE)
 ```
 
-## Including Plots
+The current dataset contains a lot of fields which are not nessecary for our analysis. For our study data set we will create a subset with only the information related to event type, population health and property damage.
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r activity_subset}
+tidy_storm_data <- storm_data %>% select(STATE, EVTYPE, FATALITIES, INJURIES, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+It also contains information for all United States territories, not just the core states. Before performing any analysis we will need to filter out any non-State entities.
+
+```{r usa_filter}
+# Filter the data using the state.abb field from the state file in datasets package
+tidy_storm_data <- tidy_storm_data %>% filter(STATE %in% state.abb)
+head(tidy_storm_data)
+```
+
+Now that we have only the fields and states that are interested in we need to turn change the property and crop damage totals into single unit representations.
+
+In order to do this we use the following function to turn the PROPDMGEXP and CROPDMGEXP columns into numeric lists. We can then uses these lists to create cost columns by multiplying them by the PROPDMG and CROPDMG columns.
+
+```{r exponent_func}
+# Create a function that turns the EXP column into numeric values
+exp_to_num <- function(i) {
+    if (i %in% c("h", "H"))
+        return(100)
+    else if (i %in% c("k", "K"))
+        return(1000)
+    else if (i %in% c("m", "M"))
+        return(1000000)
+    else if (i %in% c("b", "B"))
+        return(1000000000)
+    else if (!is.na(as.numeric(i))) 
+        return(as.numeric(i))
+    else if (i %in% c("", "-", "?", "+"))
+        return(0)
+}
+
+# Convert property damage into cash value
+prop_exp <- sapply(tidy_storm_data$PROPDMGEXP, FUN=exp_to_num)
+tidy_storm_data$property_damage <- tidy_storm_data$PROPDMG * prop_exp
+
+# Convert crop damage into cash value
+crop_exp <- sapply(tidy_storm_data$CROPDMGEXP, FUN=exp_to_num)
+tidy_storm_data$crop_damage <- tidy_storm_data$CROPDMG * crop_exp
+
+# Drop unessecary property and crop columns
+tidy_storm_data$PROPDMG <- NULL
+tidy_storm_data$PROPDMGEXP <- NULL
+tidy_storm_data$CROPDMG <- NULL
+tidy_storm_data$CROPDMGEXP <- NULL
+
+# Rename columns to make them easier to read
+colnames(tidy_storm_data) <- c("state", "event_type", "fatalities", "injuries", "property_damage_dollars", "crop_damage_dollars")
+
+# Show head of tidy data
+head(tidy_storm_data)
+
+# Save a copy of the tidy data set to the data directory
+if (!file.exists("data/tidy")) {
+        dir.create("data/tidy")
+}
+write.csv(tidy_storm_data, file = "./data/tidy/tidy_storm_data.csv")
+```
