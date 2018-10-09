@@ -1,2 +1,7 @@
 base
 dplyr
+ggplot2
+magrittr
+ggpubr
+bindrcpp
+broman

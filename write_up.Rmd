@@ -1,15 +1,18 @@
 ---
-title: "Between 1950 and November 2011 what weather events in the USA have had the biggest negative impact on population health and largest economic impact"
+title: Between 1950 and November 2011 which weather events have had the largest impact
+  on population health and property damage in the United States
 author: "Scott Robertson"
 date: "02/10/2018"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
-```{r setup, include=TRUE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, cache = TRUE, fig.path='figure/')
 ```
 
-## Synopsis
+## 1. Synopsis
 
 Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
 
@@ -20,14 +23,18 @@ This data has been used to answer two questions in this paper:
 1. Across the United States, which types of events are most harmful with respect to population health?
 2. Across the United States, which types of events have the greatest economic consequences?
 
-## Environment setup
+---
+
+## 2. Environment setup
 
 During this analysis the following R packages will be used. The code provided below will check if they are already installed, install any missing ones, and load them into your working envrionment. 
 
 ```{r packages}
-
+# Load the packages into the R environment
 library(datasets)
 library(dplyr)
+library(ggplot2)
+library(ggpubr)
 
 ```
 
@@ -40,9 +47,9 @@ There is also some documentation of the database available. This provides detail
 - National Weather Service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
 - National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
 
-The following code will 
+The following code will create a data folder in your working directory, download the nessecary files and read the data into your environment.
 
-```{r environment, cache=TRUE}
+```{r environment}
 # Create data folder in working directory
 if (!file.exists("data/raw")) {
         dir.create("data/raw")
@@ -62,10 +69,11 @@ date_downloaded <- Sys.time()
 # Output date data was downloaded
 date_downloaded
 ```
+---
 
-## Study data
+## 3. Data processing
 
-```{r data, cache=TRUE}
+```{r data}
 # Read full data set into R and show head of file
 storm_data <- read.csv("./data/raw/storm_data.csv.bz2", header = TRUE, sep = ",")
 
@@ -79,14 +87,25 @@ str(storm_data$STATE)
 The current dataset contains a lot of fields which are not nessecary for our analysis. For our study data set we will create a subset with only the information related to event type, population health and property damage.
 
 ```{r activity_subset}
-tidy_storm_data <- storm_data %>% select(STATE, EVTYPE, FATALITIES, INJURIES, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP)
+# Select only the columns of interest to our study
+tidy_storm_data <- storm_data %>% 
+        select(STATE, 
+               EVTYPE, 
+               FATALITIES, 
+               INJURIES, 
+               PROPDMG, 
+               PROPDMGEXP, 
+               CROPDMG, 
+               CROPDMGEXP)
 ```
 
 It also contains information for all United States territories, not just the core states. Before performing any analysis we will need to filter out any non-State entities.
 
 ```{r usa_filter}
 # Filter the data using the state.abb field from the state file in datasets package
-tidy_storm_data <- tidy_storm_data %>% filter(STATE %in% state.abb)
+tidy_storm_data <- tidy_storm_data %>% 
+        filter(STATE %in% state.abb)
+
 head(tidy_storm_data)
 ```
 
@@ -124,9 +143,18 @@ tidy_storm_data$PROPDMG <- NULL
 tidy_storm_data$PROPDMGEXP <- NULL
 tidy_storm_data$CROPDMG <- NULL
 tidy_storm_data$CROPDMGEXP <- NULL
+```
 
+Finally we will rename the columns and save a copy of the tidy data set as an csv file in the data folder.
+
+```{r tidy_data}
 # Rename columns to make them easier to read
-colnames(tidy_storm_data) <- c("state", "event_type", "fatalities", "injuries", "property_damage_dollars", "crop_damage_dollars")
+colnames(tidy_storm_data) <- c("state", 
+                               "event_type", 
+                               "fatalities", 
+                               "injuries", 
+                               "property_damage_dollars",
+                               "crop_damage_dollars")
 
 # Show head of tidy data
 head(tidy_storm_data)
@@ -137,3 +165,116 @@ if (!file.exists("data/tidy")) {
 }
 write.csv(tidy_storm_data, file = "./data/tidy/tidy_storm_data.csv")
 ```
+---
+
+## 4. Population Health Impact Prepration
+
+In order to assess which events have the highest impact on population health we will look at which events have caused the highest total fatalities and injuries.
+
+The sum is being used as opposed to the average per event as this will be less likley to be negativley impacted by inconsistent recording of the event type over the length of the dataset, in particular in earlier periods when not all events were captured. 
+
+It also avoids focusing on extreme events which may have only occured a handful of times, with significant impact, and instead focuses on repeating events which can be targeted for future improvements in management.
+
+```{r health_impact}
+# Summarise dataset by total fatalities and injuries for each event
+health_impact <- tidy_storm_data %>% 
+        group_by(event_type) %>% 
+        summarise(fatalities = sum(fatalities), injuries = sum(injuries))
+```
+---
+
+## 5. Economic Impact Preperation
+
+For the same reason as mentioned in the Population Health Impact Prepration section we will be using the total cost in dollars for each event type. 
+
+As both property and crop damage are meassured in dollar ammounts we will also create a combined cost for each event type in case of any variation between damage types.
+
+```{r economic_impact}
+# Summarise dataset by total fatalities and injuries for each event
+economic_impact <- tidy_storm_data %>% 
+        group_by(event_type) %>% 
+        summarise(property = sum(property_damage_dollars), crops = sum(crop_damage_dollars))
+
+## Create a combined column in order to look at total damage
+economic_impact$combined <- economic_impact$property + economic_impact$crops
+```
+---
+
+## 6 Results
+
+### 6.1 Across the United States, which types of events are most harmful with respect to population health?
+
+In order to look at the most harmful events the following figure has been produced showing the Top 10 events for number of Fatalities and Injuries.
+```{r health_answer}
+# Create two bar graphs to show the top 10 sources fatalities and injuries
+fatalities <- ggplot(data=head(health_impact[order(health_impact$fatalities, decreasing = T),],10), 
+                     aes(x=reorder(event_type, fatalities), y=fatalities)) +
+        geom_bar(fill="red", 
+                 stat="identity") + 
+        coord_flip() +
+        labs (x = "Event", 
+              y = "Number of fatalities", 
+              title = "Top 10 Events by Number of Fatalities")
+
+injury <- ggplot(data=head(health_impact[order(health_impact$injuries, decreasing = T),],10), 
+                 aes(x=reorder(event_type, injuries), y=injuries)) +
+        geom_bar(fill="green", 
+                 stat="identity") + 
+        coord_flip() +
+        labs (x = "Event", 
+              y = "Number of injuries", 
+              title = "Top 10 Events by Number of Injuries")
+
+# Arrange the two graphs into a single figure
+ggarrange(fatalities, injury, ncol = 1, nrow = 2)
+```
+
+Across both health metrics the events that have the greatest impact are Tornado's with **`r max(health_impact$fatalities)`** fatalities and **`r as.integer(max(health_impact$injuries))`** injuries between 1950 and November 2011.
+
+
+### 6.2 Across the United States, which types of events have the greatest economic consequences?
+
+In order to answer this question we also look at the Top 10 events for Property Damage and Crop damage.
+```{r economic_answer}
+
+# Create two bar graphs to show the top 10 sources fatalities and injuries
+property <- ggplot(data=head(economic_impact[order(economic_impact$property, decreasing = T),],10), 
+                   aes(x=reorder(event_type, property), y=property/1000000)) +
+        geom_bar(fill="blue", 
+                 stat="identity") + 
+        coord_flip() +
+        labs (x = "Event", 
+              y = "Property damage (million $)", 
+              title = "Top 10 Events by Property Damage in Million Dollars")
+
+crops <- ggplot(data=head(economic_impact[order(economic_impact$crops, decreasing = T),],10), 
+                aes(x=reorder(event_type, crops), y=crops/1000000)) +
+        geom_bar(fill="wheat", 
+                 stat="identity") + 
+        coord_flip() +
+        labs (x = "Event", 
+              y = "Crop damage (million $)", 
+              title = "Top 10 Events by Crop Damage in Million Dollars")
+
+# Arrange the two graphs into a single figure
+ggarrange(property, crops, ncol = 1, nrow = 2)
+```
+
+The image presented by these two graphs is less clear than with the health impact. The cost of the property damage is a lot higher than the crop damage, so you cannot easily tell from this figure which events have the highest impact.
+
+What we can draw from this is that Flood's have caused the most property damage at **$`r as.integer(max(economic_impact$property)/1000000)`m** and Drought's have caused the most crop damage at **$`r as.integer(max(economic_impact$crops)/1000000)`m**.
+
+We then combine the property and crop damage to create a total economic impact figure.
+```{r total_economic}
+# Create two bar graphs to show the top 10 sources of combined damage cost
+ggplot(data=head(economic_impact[order(economic_impact$combined, decreasing = T),],10), 
+       aes(x=reorder(event_type, combined), y=combined/1000000)) +
+        geom_bar(fill="maroon", 
+                 stat="identity") + 
+        coord_flip() +
+        labs(x = "Event", 
+             y = "Economic impact (million $)", 
+             title = "Top 10 Events for Total Economic Impact in Million Dollars")
+```
+
+From this it is possible to see that by a large margin the most economiclly impactful weather event is flooding with a combined cost of **$`r as.integer(max(economic_impact$combined)/1000000)`m**.
